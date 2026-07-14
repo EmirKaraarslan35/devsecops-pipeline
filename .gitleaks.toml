@@ -1,0 +1,9 @@
+# Gitleaks Konfigürasyonu
+# .bak dosyalarını tarama dışı bırak (demo amaçlı dosyalar)
+[extend]
+
+[allowlist]
+  paths = [
+    '''\.bak$''',
+    '''vulnerable_demo'''
+  ]

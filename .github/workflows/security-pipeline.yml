@@ -1,10 +1,15 @@
 # =============================================================
-# DevSecOps Pipeline - BİRLEŞİK GÜVENLİK HATTI
+# DevSecOps Pipeline - BİRLEŞİK GÜVENLİK HATTI (v2)
 # =============================================================
-# Bu pipeline tüm güvenlik taramalarını tek çatı altında birleştirir.
-# Her push ve PR'da 3 paralel güvenlik kontrolü çalışır.
-# Tümü başarılı olursa → Güvenlik Kapısı açılır → Deploy izni verilir.
-# Biri bile başarısız olursa → Kod canlıya ÇIKAMAZ.
+# Tüm güvenlik taramalarını tek çatı altında birleştirir.
+# Her push ve PR'da 5 paralel kontrol çalışır:
+#   1. SAST (Bandit) - Statik kod analizi
+#   2. Bağımlılık Kontrolü (pip-audit) - Python kütüphane güvenliği
+#   3. OWASP Dependency-Check - Kapsamlı bağımlılık taraması (NVD)
+#   4. Secret Scanning (Gitleaks) - Şifre/API key taraması
+#   5. Unit Tests (pytest) - Birim testleri
+# Tümü başarılı → Güvenlik Kapısı açılır → Deploy izni
+# Biri bile başarısız → Kod canlıya ÇIKAMAZ
 # =============================================================
 
 name: "🔒 DevSecOps Güvenlik Hattı"
@@ -62,7 +67,6 @@ jobs:
 
       - name: "🚦 SAST Güvenlik Kapısı"
         run: |
-          echo ""
           echo "🚦 Medium+ seviye açık kontrolü..."
           bandit -r src/ \
             --severity-level medium \
@@ -71,7 +75,7 @@ jobs:
           if [ $? -eq 0 ]; then
             echo "✅ SAST kontrolü geçti!"
           else
-            echo "❌ SAST kontrolü BAŞARISIZ - Güvenlik açığı bulundu!"
+            echo "❌ SAST kontrolü BAŞARISIZ!"
             exit 1
           fi
 
@@ -79,7 +83,7 @@ jobs:
   # 2. Bağımlılık Güvenlik Kontrolü (pip-audit)
   # ═══════════════════════════════════════════════════════════
   dependency-scan:
-    name: "📦 Bağımlılık Güvenlik Kontrolü"
+    name: "📦 Bağımlılık Kontrolü (pip-audit)"
     runs-on: ubuntu-latest
 
     steps:
@@ -97,7 +101,7 @@ jobs:
       - name: "🔍 Bağımlılık Taraması"
         run: |
           echo "════════════════════════════════════════"
-          echo "📦 Bağımlılık Güvenlik Taraması Başlıyor"
+          echo "📦 pip-audit Bağımlılık Taraması"
           echo "════════════════════════════════════════"
           pip-audit -r requirements.txt --desc --format columns
           if [ $? -eq 0 ]; then
@@ -107,25 +111,63 @@ jobs:
             exit 1
           fi
 
-      - name: "📋 JSON Rapor Oluştur"
+      - name: "📋 JSON Rapor"
         if: always()
         run: |
-          pip-audit \
-            -r requirements.txt \
+          pip-audit -r requirements.txt \
             --format json \
-            --output dep-audit-report.json \
+            --output pip-audit-report.json \
             --desc || true
 
       - name: "💾 Raporu Kaydet"
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: dependency-audit-report
-          path: dep-audit-report.json
+          name: pip-audit-report
+          path: pip-audit-report.json
           retention-days: 30
 
   # ═══════════════════════════════════════════════════════════
-  # 3. Gizli Bilgi Taraması (Gitleaks)
+  # 3. OWASP Dependency-Check (NVD Veritabanı Taraması)
+  # ═══════════════════════════════════════════════════════════
+  owasp-dependency-check:
+    name: "🛡️ OWASP Dependency-Check"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "📥 Kodu İndir"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Python Kur"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "📦 Bağımlılıkları Kur"
+        run: pip install -r requirements.txt
+
+      - name: "🛡️ OWASP Dependency-Check Taraması"
+        uses: dependency-check/Dependency-Check_Action@main
+        id: depcheck
+        with:
+          project: "devsecops-pipeline"
+          path: "."
+          format: "HTML"
+          out: "reports"
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+
+      - name: "💾 OWASP Raporunu Kaydet"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owasp-dependency-check-report
+          path: reports/
+          retention-days: 30
+
+  # ═══════════════════════════════════════════════════════════
+  # 4. Gizli Bilgi Taraması (Gitleaks)
   # ═══════════════════════════════════════════════════════════
   secret-scan:
     name: "🔑 Gizli Bilgi Taraması (Gitleaks)"
@@ -143,30 +185,97 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ═══════════════════════════════════════════════════════════
-  # 4. GÜVENLİK KAPISI - Tüm Testlerin Sonucu
+  # 5. Birim Testleri (pytest)
+  # ═══════════════════════════════════════════════════════════
+  unit-tests:
+    name: "🧪 Birim Testleri (pytest)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "📥 Kodu İndir"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Python Kur"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "📦 Bağımlılıkları Kur"
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: "🧪 Testleri Çalıştır"
+        run: |
+          echo "════════════════════════════════════════"
+          echo "🧪 Birim Testleri Başlıyor"
+          echo "════════════════════════════════════════"
+          pytest tests/ \
+            -v \
+            --tb=short \
+            --cov=src \
+            --cov-report=term-missing \
+            --cov-report=html:coverage-report
+          echo ""
+          echo "✅ Tüm testler başarılı!"
+
+      - name: "💾 Coverage Raporunu Kaydet"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-coverage-report
+          path: coverage-report/
+          retention-days: 30
+
+  # ═══════════════════════════════════════════════════════════
+  # 6. GÜVENLİK KAPISI - Tüm Kontrollerin Sonucu
   # ═══════════════════════════════════════════════════════════
   security-gate:
     name: "🚦 Güvenlik Kapısı"
     runs-on: ubuntu-latest
-    needs: [sast-scan, dependency-scan, secret-scan]
+    needs: [sast-scan, dependency-scan, owasp-dependency-check, secret-scan, unit-tests]
     if: always()
 
     steps:
       - name: "🚦 Güvenlik Kapısı Kararı"
         run: |
           echo "════════════════════════════════════════"
-          echo "🚦 GÜVENLİK KAPISI - SONUÇ"
+          echo "🚦 GÜVENLİK KAPISI - SONUÇ RAPORU"
           echo "════════════════════════════════════════"
           echo ""
-          echo "📋 Test Sonuçları:"
-          echo "  SAST (Bandit):        ${{ needs.sast-scan.result }}"
-          echo "  Bağımlılık Kontrolü:  ${{ needs.dependency-scan.result }}"
-          echo "  Gizli Bilgi Taraması: ${{ needs.secret-scan.result }}"
+          echo "📋 Kontrol Sonuçları:"
+          echo "  🔍 SAST (Bandit):              ${{ needs.sast-scan.result }}"
+          echo "  📦 Bağımlılık (pip-audit):      ${{ needs.dependency-scan.result }}"
+          echo "  🛡️ OWASP Dependency-Check:      ${{ needs.owasp-dependency-check.result }}"
+          echo "  🔑 Gizli Bilgi (Gitleaks):      ${{ needs.secret-scan.result }}"
+          echo "  🧪 Birim Testleri (pytest):     ${{ needs.unit-tests.result }}"
           echo ""
 
-          if [[ "${{ needs.sast-scan.result }}" == "success" && \
-                "${{ needs.dependency-scan.result }}" == "success" && \
-                "${{ needs.secret-scan.result }}" == "success" ]]; then
+          FAILED=0
+
+          if [[ "${{ needs.sast-scan.result }}" != "success" ]]; then
+            echo "❌ SAST kontrolü başarısız!"
+            FAILED=1
+          fi
+          if [[ "${{ needs.dependency-scan.result }}" != "success" ]]; then
+            echo "❌ Bağımlılık kontrolü başarısız!"
+            FAILED=1
+          fi
+          if [[ "${{ needs.owasp-dependency-check.result }}" != "success" ]]; then
+            echo "❌ OWASP Dependency-Check başarısız!"
+            FAILED=1
+          fi
+          if [[ "${{ needs.secret-scan.result }}" != "success" ]]; then
+            echo "❌ Gizli bilgi taraması başarısız!"
+            FAILED=1
+          fi
+          if [[ "${{ needs.unit-tests.result }}" != "success" ]]; then
+            echo "❌ Birim testleri başarısız!"
+            FAILED=1
+          fi
+
+          echo ""
+          if [ $FAILED -eq 0 ]; then
             echo "════════════════════════════════════════"
             echo "✅ TÜM GÜVENLİK TESTLERİ BAŞARILI!"
             echo "   Kod canlıya alınabilir."
@@ -175,13 +284,13 @@ jobs:
             echo "════════════════════════════════════════"
             echo "❌ GÜVENLİK KAPISI BAŞARISIZ!"
             echo "   Kod canlıya ALINAMAZ."
-            echo "   Lütfen başarısız testleri inceleyin."
+            echo "   Başarısız kontrolleri düzeltin."
             echo "════════════════════════════════════════"
             exit 1
           fi
 
   # ═══════════════════════════════════════════════════════════
-  # 5. DEPLOY - Güvenlik Kapısını Geçerse
+  # 7. DEPLOY - Güvenlik Kapısını Geçerse
   # ═══════════════════════════════════════════════════════════
   deploy:
     name: "🚀 Deploy (Canlıya Alma)"
@@ -199,10 +308,7 @@ jobs:
           echo "Tüm güvenlik testlerinden geçen kod"
           echo "canlı ortama alınıyor..."
           echo ""
-          # Gerçek deploy komutları buraya eklenir
-          # Örnek: Docker build, Kubernetes deploy, vb.
           echo "✅ Deploy başarıyla tamamlandı!"
-          echo ""
           echo "📅 Tarih: $(date)"
           echo "📝 Commit: ${{ github.sha }}"
           echo "👤 Kullanıcı: ${{ github.actor }}"

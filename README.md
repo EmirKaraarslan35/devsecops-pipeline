@@ -76,9 +76,21 @@ Python kaynak kodunu çalıştırmadan analiz ederek güvenlik açıklarını te
 
 `requirements.txt` dosyasındaki Python kütüphanelerini [PyPI Advisory Database](https://github.com/pypa/advisory-database) ile karşılaştırarak bilinen güvenlik açıklarını (CVE) tespit eder.
 
-### 3. 🔑 Gitleaks — Gizli Bilgi Taraması (Secret Scanning)
+### 3. 🛡️ OWASP Dependency-Check — Kapsamlı Bağımlılık Taraması
+
+Projedeki tüm bağımlılıkları **NVD (National Vulnerability Database)** ile karşılaştırarak bilinen güvenlik açıklarını (CVE) tespit eder. CVSS puanı 7.0 ve üzeri olan açıklar bulunduğunda pipeline durdurulur.
+
+### 4. 🔑 Gitleaks — Gizli Bilgi Taraması (Secret Scanning)
 
 Git geçmişi dahil tüm commit'lerde yanlışlıkla bırakılmış şifreleri, API anahtarlarını, token'ları ve diğer gizli bilgileri tespit eder.
+
+### 5. 🖥️ SonarQube — Kapsamlı Kod Kalitesi ve Güvenlik Analizi
+
+30'dan fazla programlama dilini destekleyen, kod kalitesi (code smell, duplicate code) ve güvenlik açıklarını analiz eden platform. Quality Gate ile kodun belirlenen kalite standartlarını karşılayıp karşılamadığını kontrol eder.
+
+### 6. 🧪 pytest — Birim Testleri
+
+Python kodunun doğru çalıştığını doğrulayan otomatik testler. Kod kapsamı (coverage) raporu üretir.
 
 ---
 
@@ -99,8 +111,10 @@ devsecops-pipeline/
 │   └── test_app.py                  # Birim testleri
 ├── requirements.txt                 # Python bağımlılıkları
 ├── .bandit                          # Bandit konfigürasyonu
+├── .gitleaks.toml                   # Gitleaks konfigürasyonu
+├── sonar-project.properties         # SonarQube konfigürasyonu
 ├── .gitignore                       # Git hariç tutma listesi
-└── README.md                       # Bu dosya
+└── README.md                        # Bu dosya
 ```
 
 ---
