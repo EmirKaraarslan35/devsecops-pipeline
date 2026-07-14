@@ -1,0 +1,208 @@
+# =============================================================
+# DevSecOps Pipeline - BİRLEŞİK GÜVENLİK HATTI
+# =============================================================
+# Bu pipeline tüm güvenlik taramalarını tek çatı altında birleştirir.
+# Her push ve PR'da 3 paralel güvenlik kontrolü çalışır.
+# Tümü başarılı olursa → Güvenlik Kapısı açılır → Deploy izni verilir.
+# Biri bile başarısız olursa → Kod canlıya ÇIKAMAZ.
+# =============================================================
+
+name: "🔒 DevSecOps Güvenlik Hattı"
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ═══════════════════════════════════════════════════════════
+  # 1. SAST - Statik Kod Güvenlik Analizi (Bandit)
+  # ═══════════════════════════════════════════════════════════
+  sast-scan:
+    name: "🔍 SAST - Bandit Kod Taraması"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "📥 Kodu İndir"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Python Kur"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "📦 Bandit Kur"
+        run: pip install bandit[toml]
+
+      - name: "📋 Tam Tarama Raporu"
+        run: |
+          echo "════════════════════════════════════════"
+          echo "🔍 SAST - Bandit Statik Analiz Başlıyor"
+          echo "════════════════════════════════════════"
+          bandit -r src/ \
+            -f json \
+            -o bandit-report.json \
+            --severity-level low \
+            --confidence-level low \
+            --exit-zero
+          bandit -r src/ -f screen --exit-zero
+
+      - name: "💾 Bandit Raporunu Kaydet"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-sast-report
+          path: bandit-report.json
+          retention-days: 30
+
+      - name: "🚦 SAST Güvenlik Kapısı"
+        run: |
+          echo ""
+          echo "🚦 Medium+ seviye açık kontrolü..."
+          bandit -r src/ \
+            --severity-level medium \
+            --confidence-level medium \
+            -f screen
+          if [ $? -eq 0 ]; then
+            echo "✅ SAST kontrolü geçti!"
+          else
+            echo "❌ SAST kontrolü BAŞARISIZ - Güvenlik açığı bulundu!"
+            exit 1
+          fi
+
+  # ═══════════════════════════════════════════════════════════
+  # 2. Bağımlılık Güvenlik Kontrolü (pip-audit)
+  # ═══════════════════════════════════════════════════════════
+  dependency-scan:
+    name: "📦 Bağımlılık Güvenlik Kontrolü"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "📥 Kodu İndir"
+        uses: actions/checkout@v4
+
+      - name: "🐍 Python Kur"
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: "📦 pip-audit Kur"
+        run: pip install pip-audit
+
+      - name: "🔍 Bağımlılık Taraması"
+        run: |
+          echo "════════════════════════════════════════"
+          echo "📦 Bağımlılık Güvenlik Taraması Başlıyor"
+          echo "════════════════════════════════════════"
+          pip-audit -r requirements.txt --desc --format columns
+          if [ $? -eq 0 ]; then
+            echo "✅ Tüm bağımlılıklar güvenli!"
+          else
+            echo "❌ Güvenlik açığı olan bağımlılık bulundu!"
+            exit 1
+          fi
+
+      - name: "📋 JSON Rapor Oluştur"
+        if: always()
+        run: |
+          pip-audit \
+            -r requirements.txt \
+            --format json \
+            --output dep-audit-report.json \
+            --desc || true
+
+      - name: "💾 Raporu Kaydet"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit-report
+          path: dep-audit-report.json
+          retention-days: 30
+
+  # ═══════════════════════════════════════════════════════════
+  # 3. Gizli Bilgi Taraması (Gitleaks)
+  # ═══════════════════════════════════════════════════════════
+  secret-scan:
+    name: "🔑 Gizli Bilgi Taraması (Gitleaks)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "📥 Kodu İndir"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "🔍 Gitleaks - Şifre/API Key Taraması"
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ═══════════════════════════════════════════════════════════
+  # 4. GÜVENLİK KAPISI - Tüm Testlerin Sonucu
+  # ═══════════════════════════════════════════════════════════
+  security-gate:
+    name: "🚦 Güvenlik Kapısı"
+    runs-on: ubuntu-latest
+    needs: [sast-scan, dependency-scan, secret-scan]
+    if: always()
+
+    steps:
+      - name: "🚦 Güvenlik Kapısı Kararı"
+        run: |
+          echo "════════════════════════════════════════"
+          echo "🚦 GÜVENLİK KAPISI - SONUÇ"
+          echo "════════════════════════════════════════"
+          echo ""
+          echo "📋 Test Sonuçları:"
+          echo "  SAST (Bandit):        ${{ needs.sast-scan.result }}"
+          echo "  Bağımlılık Kontrolü:  ${{ needs.dependency-scan.result }}"
+          echo "  Gizli Bilgi Taraması: ${{ needs.secret-scan.result }}"
+          echo ""
+
+          if [[ "${{ needs.sast-scan.result }}" == "success" && \
+                "${{ needs.dependency-scan.result }}" == "success" && \
+                "${{ needs.secret-scan.result }}" == "success" ]]; then
+            echo "════════════════════════════════════════"
+            echo "✅ TÜM GÜVENLİK TESTLERİ BAŞARILI!"
+            echo "   Kod canlıya alınabilir."
+            echo "════════════════════════════════════════"
+          else
+            echo "════════════════════════════════════════"
+            echo "❌ GÜVENLİK KAPISI BAŞARISIZ!"
+            echo "   Kod canlıya ALINAMAZ."
+            echo "   Lütfen başarısız testleri inceleyin."
+            echo "════════════════════════════════════════"
+            exit 1
+          fi
+
+  # ═══════════════════════════════════════════════════════════
+  # 5. DEPLOY - Güvenlik Kapısını Geçerse
+  # ═══════════════════════════════════════════════════════════
+  deploy:
+    name: "🚀 Deploy (Canlıya Alma)"
+    runs-on: ubuntu-latest
+    needs: [security-gate]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: "🚀 Deploy İşlemi"
+        run: |
+          echo "════════════════════════════════════════"
+          echo "🚀 DEPLOY - Canlıya Alma"
+          echo "════════════════════════════════════════"
+          echo ""
+          echo "Tüm güvenlik testlerinden geçen kod"
+          echo "canlı ortama alınıyor..."
+          echo ""
+          # Gerçek deploy komutları buraya eklenir
+          # Örnek: Docker build, Kubernetes deploy, vb.
+          echo "✅ Deploy başarıyla tamamlandı!"
+          echo ""
+          echo "📅 Tarih: $(date)"
+          echo "📝 Commit: ${{ github.sha }}"
+          echo "👤 Kullanıcı: ${{ github.actor }}"
