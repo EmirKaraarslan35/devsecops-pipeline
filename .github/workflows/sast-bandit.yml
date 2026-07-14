@@ -1,0 +1,100 @@
+# =============================================================
+# DevSecOps Pipeline - SAST Güvenlik Taraması (Bandit)
+# =============================================================
+# Bu pipeline her push ve pull request'te otomatik çalışır.
+# Python kodunu statik olarak analiz eder ve güvenlik açıklarını bulur.
+# HIGH seviye açık bulunursa pipeline DURUR ve kod canlıya çıkamaz.
+# =============================================================
+
+name: "🔍 SAST - Bandit Güvenlik Taraması"
+
+# Ne zaman çalışsın?
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  # Manuel çalıştırma butonu (test için çok kullanışlı)
+  workflow_dispatch:
+
+jobs:
+  bandit-sast-scan:
+    name: "🔍 Bandit SAST Taraması"
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Kodu indir
+      - name: "📥 Kodu İndir"
+        uses: actions/checkout@v4
+
+      # 2. Python kur
+      - name: "🐍 Python Kur"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 3. Bandit kur
+      - name: "📦 Bandit Kur"
+        run: pip install bandit[toml]
+
+      # 4. Bandit taraması — Rapor oluştur (her zaman çalışır, durdurmaz)
+      - name: "📋 Bandit Tarama Raporu Oluştur"
+        run: |
+          echo "========================================"
+          echo "🔍 Bandit SAST Taraması Başlıyor..."
+          echo "========================================"
+          
+          # JSON rapor oluştur (artifact olarak kaydedilecek)
+          bandit -r src/ \
+            -f json \
+            -o bandit-report.json \
+            --severity-level low \
+            --confidence-level low \
+            --exit-zero
+          
+          # Ekrana okunabilir rapor yazdır
+          echo ""
+          echo "📋 Detaylı Tarama Sonuçları:"
+          echo "----------------------------------------"
+          bandit -r src/ \
+            -f screen \
+            --severity-level low \
+            --confidence-level low \
+            --exit-zero
+
+      # 5. Raporu artifact olarak kaydet
+      - name: "💾 Raporu Kaydet"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-sast-report
+          path: bandit-report.json
+          retention-days: 30
+
+      # 6. KRİTİK KONTROL — High severity bulgu varsa pipeline DURUR!
+      - name: "🚦 Güvenlik Kapısı — Kritik Açık Kontrolü"
+        run: |
+          echo "========================================"
+          echo "🚦 Güvenlik Kapısı Kontrolü"
+          echo "========================================"
+          echo ""
+          echo "HIGH veya MEDIUM seviye açık aranıyor..."
+          echo ""
+          
+          # Medium ve üstü açık varsa exit code 1 döner = pipeline durur
+          bandit -r src/ \
+            --severity-level medium \
+            --confidence-level medium \
+            -f screen
+          
+          if [ $? -eq 0 ]; then
+            echo ""
+            echo "✅ GÜVENLİK KAPISI GEÇİLDİ!"
+            echo "Medium veya üstü seviye açık bulunamadı."
+          else
+            echo ""
+            echo "❌ GÜVENLİK KAPISI BAŞARISIZ!"
+            echo "Medium veya üstü seviye güvenlik açığı bulundu."
+            echo "Lütfen yukarıdaki bulguları düzeltin."
+            exit 1
+          fi
