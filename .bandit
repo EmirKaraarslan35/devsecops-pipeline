@@ -1,0 +1,13 @@
+[tool.bandit]
+# Hangi klasörleri tarayacağız
+targets = ["src"]
+
+# Hangi klasörleri hariç tutacağız (testler ve sanal ortam)
+exclude_dirs = ["tests", "venv", ".venv", "__pycache__"]
+
+# Minimum şiddet seviyesi: low, medium, high
+# Medium ve üstünü raporla
+severity = "medium"
+
+# Minimum güvenilirlik seviyesi: low, medium, high  
+confidence = "medium"
