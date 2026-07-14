@@ -1,0 +1,82 @@
+# =============================================================
+# DevSecOps Pipeline - Bağımlılık Güvenlik Kontrolü
+# =============================================================
+# Python kütüphanelerinde bilinen güvenlik açıklarını (CVE) tarar.
+# pip-audit ile PyPI Advisory Database'i kontrol eder.
+# Açıklı kütüphane bulunursa pipeline DURUR.
+# =============================================================
+
+name: "📦 Bağımlılık Güvenlik Kontrolü"
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  dependency-check:
+    name: "📦 pip-audit Bağımlılık Taraması"
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Kodu indir
+      - name: "📥 Kodu İndir"
+        uses: actions/checkout@v4
+
+      # 2. Python kur
+      - name: "🐍 Python Kur"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 3. pip-audit kur
+      - name: "📦 pip-audit Kur"
+        run: pip install pip-audit
+
+      # 4. Bağımlılık taraması
+      - name: "🔍 Bağımlılık Güvenlik Taraması"
+        run: |
+          echo "========================================"
+          echo "📦 Bağımlılık Güvenlik Taraması"
+          echo "========================================"
+          echo ""
+          echo "requirements.txt dosyası taranıyor..."
+          echo ""
+
+          # Taramayı çalıştır
+          pip-audit \
+            -r requirements.txt \
+            --desc \
+            --format columns
+
+          if [ $? -eq 0 ]; then
+            echo ""
+            echo "✅ Tüm bağımlılıklar güvenli!"
+          else
+            echo ""
+            echo "❌ GÜVENLİK AÇIĞI BULUNDU!"
+            echo "Lütfen requirements.txt dosyasındaki"
+            echo "kütüphaneleri güvenli versiyonlara güncelleyin."
+            exit 1
+          fi
+
+      # 5. JSON rapor oluştur
+      - name: "📋 JSON Rapor Oluştur"
+        if: always()
+        run: |
+          pip-audit \
+            -r requirements.txt \
+            --format json \
+            --output dep-audit-report.json \
+            --desc || true
+
+      # 6. Raporu kaydet
+      - name: "💾 Raporu Kaydet"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit-report
+          path: dep-audit-report.json
+          retention-days: 30
