@@ -209,12 +209,6 @@ pytest tests/ -v
 
 ---
 
-## 📝 Lisans
-
-Bu proje eğitim amaçlı hazırlanmıştır.
-
----
-
 ## 👤 Geliştirici
 
 **Emir Karaarslan** — [GitHub](https://github.com/EmirKaraarslan35)
